@@ -1,0 +1,30 @@
+{
+  "name": "xml-rust-schema-generator",
+  "collaborators": [
+    "Sebastian Detert <rust-crates@elygor.de>"
+  ],
+  "description": "web assembly wrapper to run xml_schema_generator in a web page",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Thomblin/xml_schema_generator"
+  },
+  "files": [
+    "xml_rust_schema_generator_bg.wasm",
+    "xml_rust_schema_generator.js",
+    "xml_rust_schema_generator.d.ts"
+  ],
+  "module": "xml_rust_schema_generator.js",
+  "types": "xml_rust_schema_generator.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "xml",
+    "schema",
+    "serde",
+    "deserliaze",
+    "string"
+  ]
+}
