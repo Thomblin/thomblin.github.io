@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Typing Trainer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .box {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            width: 90%;
+        }
+
+        #wordDisplay {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        canvas {
+            border: 1px solid #ccc;
+        }
+
+        #keyboard-container {
+            display: flex;
+            align-items: flex-start;
+        }
+
+        #keyboardCanvas {
+            margin-right: 20px;
+        }
+
+        #statistics {
+            width: 450px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+
+        h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .highlighted {
+            color: green;
+            font-weight: bold;
+        }
+
+        .incorrect {
+            color: red;
+            font-weight: bold;
+        }
+
+        #settings input {
+            margin-top: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="box">
+        <div id="wordDisplay">Loading...</div>
+        <div id="keyboard-container">
+            <canvas id="keyboardCanvas" width="1040" height="310"></canvas>
+            <div id="statistics">
+                <h3>Current Mistakes</h3>
+                <ul id="worstKeys"></ul>
+
+                <p id="overallErrorPercentage"></p>
+                <span><b>correct keys per minute</b> (avg last 1/5/10 minutes)</span><br/>
+                <p id="keys_per_minute"></p>
+                <span><b>words per minute</b> (avg last 1/5/10 minutes)</span><br/>
+                <p id="words_per_minute"></p>
+            </div>
+        </div>
+        <div id="settings">
+            <input type="checkbox" id="backspace_errors" checked/><label for="backspace_errors">Track Typing errors, require `Backspace` to Undo</label><br/>
+            <input type="checkbox" id="highlight_next" checked/><label for="highlight_next">Highlight next key on keyboard</label><br/>
+            <input type="checkbox" id="highlight_pressed" checked/><label for="highlight_pressed">Highlight pressed key on keyboard</label><br/>
+            <input type="checkbox" id="prefer_mistyped" checked/><label for="prefer_mistyped">Prefer words with letters where I mistype</label><br/>
+        </div>
+    </div>
+ 
+    <script>
+        function EventTracker() {
+            this.events = [];
+            this.start = Date.now();
+
+            this.track = function() {
+                const now = Date.now();
+                this.events.push(now);
+            };
+
+            this.getEventCount = function(minutes) {
+                const now = Date.now();
+                const cutoffTime = now - minutes * 60 * 1000;
+                return this.events.filter(timestamp => timestamp >= cutoffTime).length;
+            };
+
+            this.stats = function() {
+                const now = Date.now();
+                const minutes = (now - this.start) / 60000;
+                return {
+                    last1Minute: this.getEventCount(1) / Math.min(minutes, 1),
+                    last5Minutes: this.getEventCount(5) / Math.min(minutes, 5),
+                    last10Minutes: this.getEventCount(10) / Math.min(minutes, 10),
+                };
+            };
+        }
+
+        const trackerKeys = new EventTracker();
+        const trackerWords = new EventTracker();
+
+        let words = [];
+
+        const keys = [
+            ["^", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "ß", "´", "Backspace"],
+            ["Tab", "Q", "W", "E", "R", "T", "Z", "U", "I", "O", "P", "Ü", "+", "Enter"],
+            ["CapsLock", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ö", "Ä", "#"],
+            ["Shift", "<", "Y", "X", "C", "V", "B", "N", "M", ",", ".", "-", "Right Shift"],
+            ["Ctrl", "Win", "Alt", "Space", "Alt", "Fn", "Home", "Ctrl"]
+        ];
+
+        const keyWidth = 60;
+        const keyHeight = 50;
+        const keySpacing = 10;
+        const startX = 10;
+        const startY = 10;
+        const canvas = document.getElementById('keyboardCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let highlightedKeys = {};
+
+        let selectedKey = ""; // Global to track the current key to be pressed
+        let currentWord = ""; // Global to store the currently selected word
+        let currentIndex = 0; // Index to track the position in the word
+        let incorrectKeys = ""; // remember incorrect typed keys for display
+
+        let keyPressCount = {}; // Tracks how often each key should have been pressed
+        let incorrectKeyCount = {}; // Tracks how often each key was pressed incorrectly
+
+        function drawKeyboard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = "16px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            for (let row = 0; row < keys.length; row++) {
+                const rowKeys = keys[row];
+                let x = startX;
+                let y = startY + row * (keyHeight + keySpacing);
+
+                for (let col = 0; col < rowKeys.length; col++) {
+                    let key = rowKeys[col];
+                    let width = keyWidth;
+                    let isLShapedEnter = false;
+
+                    if (key === "Tab") width = keyWidth * 1.5;
+                    if (key === "Shift") width = keyWidth * 1.25;
+                    if (key === "Ctrl" || key === "Win" || key === "Alt") width = keyWidth * 1.25;
+                    else if (key === "Enter") {
+                        width = 80;
+                        isLShapedEnter = true;
+                    }
+                    else if (key === "Backspace") width = 1.85 * keyWidth;
+                    else if (key === "CapsLock") width = 1.85 * keyWidth;
+                    else if (key === "Right Shift") width = 2.75 * keyWidth;
+                    else if (key === "Space") width = 7.6 * keyWidth;
+
+                    if (highlightedKeys[key]) {
+                        ctx.fillStyle = highlightedKeys[key];
+                        ctx.lineWidth = 2;
+                    } else {
+                        ctx.fillStyle = "#f0f0f0";
+                    }
+
+                    if (key === key2Label(selectedKey) && document.getElementById("highlight_next").checked) {
+                        ctx.strokeStyle = "green";
+                        ctx.lineWidth = 2;
+                    } else {
+                        ctx.strokeStyle = "#ccc";
+                        ctx.lineWidth = 1;
+                    }
+
+                    if (isLShapedEnter) {
+                        ctx.fillRect(x, y, width, keyHeight);
+
+                        const extensionWidth = keyWidth;
+                        const extensionHeight = keyHeight + keySpacing;
+                        const extensionX = x + width - extensionWidth;
+                        const extensionY = y + keyHeight;
+                        
+                        ctx.fillRect(extensionX, extensionY, extensionWidth, extensionHeight);
+
+                        ctx.beginPath();
+                        ctx.moveTo(x, y);
+                        ctx.lineTo(x + width, y);
+                        ctx.lineTo(x + width, y + keyHeight); 
+                        ctx.lineTo(x + width, extensionY + extensionHeight); 
+                        ctx.lineTo(extensionX, extensionY + extensionHeight); 
+                        ctx.lineTo(extensionX, y + keyHeight); 
+                        ctx.lineTo(x, y + keyHeight);
+                        ctx.closePath();
+
+                        ctx.stroke();
+                    } else {
+                        ctx.fillRect(x, y, width, keyHeight);
+                        ctx.strokeRect(x, y, width, keyHeight);
+                    }
+
+                    ctx.fillStyle = "#000";
+                    ctx.fillText(key, x + width / 2, y + keyHeight / 2);
+
+                    x += width + keySpacing;
+                }
+            }
+        }
+
+        function highlightKey(key, color) {
+            highlightedKeys[key] = color;
+            drawKeyboard();
+        }
+
+        function unsetHighlightKey(key) {
+            delete highlightedKeys[key];
+            drawKeyboard();
+        }
+
+        function resetHighlights() {
+            highlightedKeys = {};
+            drawKeyboard();
+        }
+
+        function isLetter(str) {
+            return str.length === 1 && str.match(/[a-zäöü]/i);
+        }
+
+        function key2Label(key) {
+            const specialKeys = {
+                "Dead": "^",
+                "!": "1",
+                "\"": "2",
+                "²": "2",
+                "§": "3",
+                "³": "3",
+                "$": "4",
+                "%": "5",
+                "&": "6",
+                "/": "7",
+                "{": "7",
+                "(": "8",
+                "[": "8",
+                ")": "9",
+                "]": "9",
+                "=": "0",
+                "}": "0",
+                "?": "ß",
+                "\\": "ß",
+                "`": "´",
+                "@": "Q",
+                "€": "E",
+                "*a": "+",
+                "~": "+",
+                "'": "#",
+                ">": "<",
+                "|": "<",
+                "µ": "M",
+                ";": ",",
+                ":": ".",
+                "_": "-",
+                " ": "Space",
+            };
+
+            if (isLetter(key)) {
+                key = key.toUpperCase();
+            }
+
+            return specialKeys[key] || key;
+        }
+
+        function handleKeyPress(event) {
+            const keyLabel = key2Label(event.key);
+
+            if (highlightedKeys.hasOwnProperty(keyLabel) || keys.flat().includes(keyLabel)) {
+                if (document.getElementById("highlight_pressed").checked) { 
+                    highlightKey(keyLabel, "yellow");
+                }
+            }
+
+            evaluateKeypress(event);
+        }
+
+        function evaluateKeypress(event) {
+            const pressedKey = key2Label(event.key);
+            const intendedKey = key2Label(selectedKey);
+
+            if (pressedKey.length == 1) {
+                if (!keyPressCount[selectedKey]) {
+                    keyPressCount[selectedKey] = 0;
+                }
+                if (!incorrectKeyCount[selectedKey]) {
+                    incorrectKeyCount[selectedKey] = 0;
+                }
+                if (!keyPressCount[event.key]) {
+                    keyPressCount[event.key] = 0;
+                }
+                if (!incorrectKeyCount[event.key]) {
+                    incorrectKeyCount[event.key] = 0;
+                }
+
+                keyPressCount[selectedKey]++;
+                keyPressCount[event.key]++;
+            }
+
+            if (event.key === selectedKey && incorrectKeys.length === 0) {
+                currentIndex++;
+                trackerKeys.track();
+
+                if (event.key === " ") {
+                    trackerWords.track();
+                }
+
+                if (currentIndex < currentWord.length) {
+                    selectedKey = currentWord[currentIndex];
+                    drawKeyboard();
+                    updateWordDisplay();
+                } else {
+                    selectRandomWords();
+                }
+            } else if (pressedKey.length == 1) {
+                incorrectKeyCount[event.key]++;
+                incorrectKeyCount[selectedKey]++;
+                updateWordDisplay(event.key);
+            } else if (event.key === "Backspace") {
+                updateWordDisplay(event.key);
+            }
+
+            updateStatistics();
+        }
+
+        function handleKeyRelease(event) {
+            const keyLabel = key2Label(event.key);
+
+            if (highlightedKeys.hasOwnProperty(keyLabel) || keys.flat().includes(keyLabel)) {
+                unsetHighlightKey(keyLabel);
+            }
+        }
+
+        async function loadWords() {
+            try {
+                const response = await fetch('german.txt');
+                const text = await response.text();
+                words = text.split('\n').map(word => word.trim()).filter(word => word.length > 0);
+                selectRandomWords();
+            } catch (error) {
+                document.getElementById('wordDisplay').textContent = "Error loading words.";
+                console.error("Error loading words:", error);
+            }
+        }
+
+        function filterWords(words, worstKeys) {
+            const significantKeys = worstKeys.filter(keyObj => keyObj.ratio > 0.2).map(keyObj => keyObj.key);
+
+            const wordlist = words.filter(word => {
+                return word.split('').some(letter => significantKeys.includes(letter));
+            });
+
+            return wordlist;
+        }
+
+        function selectRandomWords() {
+            if (words.length === 0) {
+                return;
+            }
+
+            let word_selection = words;
+
+            if (document.getElementById("prefer_mistyped").checked) {    
+                let keyStats = getStatistics();
+                let worstKeys = keyStats
+                    .filter(stat => stat.ratio > 0.2)
+                    .sort((a, b) => a.ratio === b.ratio ? b.totalPresses - a.totalPresses : b.ratio - a.ratio)
+                    .slice(0, 10);
+                
+                if (worstKeys.length > 0) {
+                    word_selection = filterWords(words, worstKeys);
+                }
+            }
+
+            let newWords = [];
+            for (let i = 0; i < 10; i++) {
+                let randomWord = word_selection[Math.floor(Math.random() * word_selection.length)];
+                newWords.push(randomWord);
+            }
+            currentWord = newWords.join(" ") + " "; 
+
+            currentIndex = 0;
+            selectedKey = currentWord[currentIndex];
+
+            updateWordDisplay();
+            drawKeyboard();
+            updateStatistics();
+        }
+
+        function updateWordDisplay(incorrectKey = "") {
+            const wordDisplay = document.getElementById('wordDisplay');
+            let wordWithHighlight = '';
+
+            for (let i = 0; i < currentWord.length; i++) {
+                if (i === currentIndex) {
+                    wordWithHighlight += `<span class="highlighted">${currentWord[i]}</span>`;
+                                    
+                    if (document.getElementById("backspace_errors").checked) {                        
+                        if (incorrectKey.length === 1) {
+                            incorrectKeys += incorrectKey;
+                        } else if (incorrectKey === "Backspace" && incorrectKeys.length > 0) {
+                            incorrectKeys = incorrectKeys.substring(0, incorrectKeys.length - 1);
+                        }
+                        if (incorrectKeys.length > 0) {
+                            wordWithHighlight += `<span class="incorrect">${incorrectKeys}</span>`;
+                        }
+                    }
+                } else {
+                    wordWithHighlight += currentWord[i];
+                }
+            }
+
+            wordDisplay.innerHTML = wordWithHighlight;
+        }
+
+        function getStatistics() {
+            let keyStats = [];
+
+            for (let key in keyPressCount) {
+                if (keyPressCount.hasOwnProperty(key)) {
+                    let keyTotalPresses = keyPressCount[key];
+                    let keyIncorrectPresses = incorrectKeyCount[key] || 0;
+
+                    let ratio = keyTotalPresses > 0 ? keyIncorrectPresses / keyTotalPresses : 0;
+                    let correctPercentage = keyTotalPresses > 0 ? (Math.min(keyIncorrectPresses, keyTotalPresses) / keyTotalPresses) * 100 : 100; 
+
+                    keyStats.push({
+                        key: key,
+                        ratio: ratio,
+                        correctPercentage: correctPercentage,
+                        totalPresses: keyTotalPresses,
+                        incorrectPresses: keyIncorrectPresses
+                    });
+                }
+            }
+
+            return keyStats;
+        }
+
+        function updateStatistics() {        
+
+            let totalPresses = 0;
+            let totalIncorrectPresses = 0;
+
+            for (let key in keyPressCount) {
+                if (keyPressCount.hasOwnProperty(key)) {
+                    totalPresses += keyPressCount[key];
+                    totalIncorrectPresses += incorrectKeyCount[key] || 0;
+                }
+            }
+    
+            let keyStats = getStatistics();
+            let worstKeys = keyStats
+                .filter(stat => stat.ratio > 0)
+                .sort((a, b) => a.ratio === b.ratio ? b.totalPresses - a.totalPresses : b.ratio - a.ratio)
+                .slice(0, 10);
+
+            let worstKeysList = document.getElementById('worstKeys');
+            worstKeysList.innerHTML = ''; 
+            worstKeys.forEach((stat) => {
+                let li = document.createElement('li');
+                li.textContent = `${stat.key}: ${stat.correctPercentage.toFixed(2)}% [total ${stat.totalPresses}]`;
+                worstKeysList.appendChild(li);
+            });
+
+            let overallErrorPercentage = totalPresses > 0 ? ((Math.min(totalIncorrectPresses, totalPresses) / totalPresses) * 100).toFixed(2) : 0;
+
+            let errorPercentageDisplay = document.getElementById('overallErrorPercentage');
+            errorPercentageDisplay.textContent = `Errors: ${overallErrorPercentage}%`;
+
+            let keysPerMinuteDisplay = document.getElementById('keys_per_minute');
+            let stats = trackerKeys.stats();
+            keysPerMinuteDisplay.textContent = `${stats['last1Minute'].toFixed(0)} / ${stats['last5Minutes'].toFixed(0)} / ${stats['last10Minutes'].toFixed(0)}`;
+            
+            let wordsPerMinuteDisplay = document.getElementById('words_per_minute');
+            stats = trackerWords.stats();
+            wordsPerMinuteDisplay.textContent = `${stats['last1Minute'].toFixed(0)} / ${stats['last5Minutes'].toFixed(0)} / ${stats['last10Minutes'].toFixed(0)}`;
+            
+        }
+
+        window.onload = () => {
+            loadWords();
+            drawKeyboard(); 
+            
+            document.getElementById("backspace_errors").addEventListener("click", () => {
+                incorrectKeys = "";
+                updateWordDisplay();
+            });
+            document.getElementById("highlight_next").addEventListener("click", () => {
+                drawKeyboard();
+            });
+            document.getElementById("highlight_pressed").addEventListener("click", () => {
+                drawKeyboard();
+            });
+        };
+
+        window.addEventListener('keydown', handleKeyPress);
+        window.addEventListener('keyup', handleKeyRelease);
+    </script>
+</body>
+
+</html>
